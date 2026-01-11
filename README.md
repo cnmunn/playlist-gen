@@ -25,10 +25,12 @@ Using this repo as a stand-in for Spotify's playlist generation agent, prepare a
 
 1. **Instrument this repo with the Braintrust SDK** and send several traces to Braintrust
    - Traces should capture the agent's LLM calls and tool usage
+   - You can use `main.py` for this
 
 2. **Create Experiments** with the following scoring functions:
    - **Variety** (LLM-as-a-judge): Evaluate whether the playlist has good artist/genre diversity
    - **PlaylistLength**: Playlist should be under 30 minutes total
+   - You can use `eval_agent.py` for this
 
 3. **Slide Presentation** to speak through. Slides will be delivered to you but you can trim the deck down to only what you need.
 
@@ -139,7 +141,7 @@ Remember Braintrust's dual audience:
 
 Bryan mentioned wanting to involve PMs. Show how Braintrust makes that possible—prompt playground, readable eval results, no-code scoring setup.
 
-**Don't make the demo overly technical.** Show what customers can *do* with Braintrust, not what Braintrust can *do*.
+**Don't make the demo overly technical.** Show what customers can *do* with Braintrust, not what Braintrust can *do*. Cohesive storytelling and narrative that the audience can understand is far more important than proving how technical you are. 
 
 ### Use Loop
 
