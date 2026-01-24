@@ -26,10 +26,15 @@ Using this repo as a stand-in for Spotify's playlist generation agent, prepare a
 1. **Instrument this repo with the Braintrust SDK** and send several traces to Braintrust
    - Traces should capture the agent's LLM calls and tool usage
    - You can use `main.py` for this
+   - Traces should look something like this:
+     - **HINT**: [Wrap](https://www.braintrust.dev/docs/integrations/ai-providers/openai#trace-automatically) the LLM client. [Decorate](https://www.braintrust.dev/docs/instrument/advanced-tracing#annotate-your-code) the tool calls. 
+![Trace Example](assets/trace.png)
 
 2. **Create Experiments** with the following scoring functions:
    - **Variety** (LLM-as-a-judge): Evaluate whether the playlist has good artist/genre diversity
    - **PlaylistLength**: Playlist should be under 30 minutes total
+   - **Hint**: You do not need to `push` scoring functions/register them with Braintrust. You can simply define the function in code and execute it locally when running the `braintrust eval path/to/eval/file.py` CLI command. [This example](https://github.com/philhetzel/braintrust-evals-101/blob/main/py/src/evals/04_multiturn/multiturn_scoring.py) shows how to create a custom LLM-as-a-judge template score and a custom python code score that would run locally without needing to be pushed to Braintrust.
+     - The only reasons you would `push` a scoring function is if you want to execute **online scoring** or evaluate Playground results with the custom score.
    - You can use `eval_agent.py` for this
 
 3. **Slide Presentation** to speak through. Slides will be delivered to you but you can trim the deck down to only what you need.
