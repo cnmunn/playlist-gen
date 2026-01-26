@@ -1,14 +1,13 @@
 import json
-from openai import OpenAI
+from braintrust import init_logger, load_prompt, traced, wrap_openai
 from dotenv import load_dotenv
+from openai import OpenAI
 from pydantic import BaseModel
 
 load_dotenv()
 
-#TODO instrument this code with tracing. You'll want to wrap the LLM client to gain model iputs/outputs and metrics and also trace the various functions and tools called by the agent
-#HINT: Don't forget to initialize a Braintrust logger
-
-client = OpenAI()
+logger = init_logger(project="PlaylistGenerator")
+client = wrap_openai(OpenAI())
 
 class Song(BaseModel):
     title: str
@@ -139,6 +138,7 @@ TOOLS = [
 ]
 
 
+@traced
 def search_songs(genre: str = None, mood: str = None) -> list[dict]:
     """Search the catalog by genre and/or mood."""
     results = MUSIC_CATALOG
@@ -149,6 +149,7 @@ def search_songs(genre: str = None, mood: str = None) -> list[dict]:
     return [{"id": s["id"], "title": s["title"], "artist": s["artist"]} for s in results]
 
 
+@traced
 def get_song_details(song_id: str) -> dict | None:
     """Get full details for a song by ID."""
     for song in MUSIC_CATALOG:
@@ -157,6 +158,7 @@ def get_song_details(song_id: str) -> dict | None:
     return None
 
 
+@traced
 def create_playlist(name: str, song_ids: list[str]) -> dict:
     """Create a playlist with the given songs."""
     songs = []
@@ -175,6 +177,7 @@ def create_playlist(name: str, song_ids: list[str]) -> dict:
     }
 
 
+@traced
 def handle_tool_call(tool_name: str, arguments: dict) -> str:
     """Execute a tool and return the result as a string."""
     if tool_name == "search_songs":
@@ -189,7 +192,8 @@ def handle_tool_call(tool_name: str, arguments: dict) -> str:
     return json.dumps(result)
 
 
-def run_agent(user_request: str) -> AgentResult:
+@traced
+def run_agent(user_request: str, prompt_override: dict | None = None) -> AgentResult:
     """Run the playlist agent with the given user request."""
     print(f"\n{'='*50}")
     print(f"User Request: {user_request}")
@@ -197,21 +201,22 @@ def run_agent(user_request: str) -> AgentResult:
 
     result = AgentResult()
 
-#TODO You may want to show how you can tweak this prompt as you improve your application. Making the prompt parameterizable would also allow you to run remote evals from the UI
-    messages = [
-        {
-            "role": "system",
-            "content": "You are a helpful music assistant that creates playlists. Use the available tools to search for songs and create playlists based on user requests. Always search for songs first, then create a playlist with your selections.",
-        },
-        {"role": "user", "content": user_request},
-    ]
+    prompt_payload = prompt_override
+    if prompt_payload is None:
+        prompt = load_prompt(
+            "PlaylistGenerator",
+            "playlist-agent",
+            defaults={"model": "gpt-4o-mini"},
+        )
+        prompt_payload = prompt.build(user_request=user_request)
+
+    messages = prompt_payload["messages"]
 
     while True:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages,
-            tools=TOOLS,
-        )
+        request_payload = dict(prompt_payload)
+        request_payload.setdefault("model", "gpt-4o-mini")
+        request_payload["messages"] = messages
+        response = client.chat.completions.create(**request_payload, tools=TOOLS)
 
         message = response.choices[0].message
 
@@ -253,7 +258,7 @@ def run_agent(user_request: str) -> AgentResult:
                 "content": tool_result,
             })
 
-#TODO You'll likely want to create some logs. Use uv run main.py after you have instrumented the code with tracing to interact with your agent.
+
 def main():
     print("Playlist Generator Agent")
     print("Type 'quit' to exit\n")

@@ -1,0 +1,3 @@
+[submodule "codex-agents"]
+	path = codex-agents
+	url = git@github.com:cnmunn/codex-agents.git
