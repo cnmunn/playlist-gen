@@ -112,12 +112,36 @@ class Playlist(BaseModel):
 class ToolCall(BaseModel):
     tool: str
     arguments: dict
-    result: dict | list
+    result: dict | list | None = None
 
 class AgentResult(BaseModel):
     playlist: Playlist | None   # The created playlist (if any)
     response: str               # The assistant's final response
     tool_calls: list[ToolCall]  # Log of all tool calls made
+```
+
+---
+
+## API Server (FastAPI)
+
+Run the HTTP server on port 8400:
+
+```bash
+uv run uvicorn api:app --host 0.0.0.0 --port 8400 --reload
+```
+
+Health check:
+
+```bash
+curl http://localhost:8400/health
+```
+
+Create a playlist:
+
+```bash
+curl -X POST http://localhost:8400/playlist \
+  -H 'Content-Type: application/json' \
+  -d '{"user_request":"upbeat workout music"}'
 ```
 
 ---

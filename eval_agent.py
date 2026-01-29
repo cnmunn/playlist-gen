@@ -1,7 +1,16 @@
 from autoevals import LLMClassifier
 from braintrust import Eval, init_dataset, Score, Prompt
 from braintrust.prompt import PromptData
+from evals.core import (
+    PROJECT_NAME,
+    VARIETY_PROMPT_TEMPLATE,
+    VARIETY_MODEL,
+    VARIETY_CHOICE_SCORES,
+    compute_playlist_length_score,
+)
 from main import run_agent
+from settings import PROMPT_ENVIRONMENT
+
 
 def _build_prompt_override(parameters: dict | None, input: dict) -> dict | None:
     if not parameters:
@@ -62,35 +71,32 @@ def task(input: dict, hooks: dict):
         parameters = getattr(hooks, "parameters", None)
         if parameters is None and isinstance(hooks, dict):
             parameters = hooks.get("parameters")
-
+    if hooks is not None:
+        try:
+            hooks.metadata = {"environment": PROMPT_ENVIRONMENT}
+        except AttributeError:
+            if isinstance(hooks, dict):
+                hooks.setdefault("metadata", {})["environment"] = PROMPT_ENVIRONMENT
     prompt_override = _build_prompt_override(parameters, input)
-
-    result = run_agent(user_input, prompt_override=prompt_override)
-    result_payload = result.model_dump()
-    _attach_playlist_metadata(hooks, result_payload.get("playlist"))
+    result_payload = run_agent(user_input, prompt_override=prompt_override)
+    _attach_playlist_metadata(hooks, result_payload.get("playlist") if isinstance(result_payload, dict) else None)
     return result_payload
 
 variety_scorer = LLMClassifier(
     name="Variety",
-    prompt_template=(
-        "Evaluate playlist variety. Prefer many unique artists and genres. "
-        "Return A (high variety), B (medium), or C (low).\n\n"
-        "Playlist output:\n{{output}}"
-    ),
-    choice_scores={"A": 1.0, "B": 0.5, "C": 0.0},
-    model="gpt-4o-mini",
+    prompt_template=VARIETY_PROMPT_TEMPLATE,
+    choice_scores=VARIETY_CHOICE_SCORES,
+    model=VARIETY_MODEL,
 )
 
 def playlist_length_scorer(output: dict):
-    playlist = output.get("playlist") if isinstance(output, dict) else None
-    duration = playlist.get("total_duration_min") if isinstance(playlist, dict) else None
-    score = 1.0 if duration is not None and duration <= 30 else 0.0
-    return Score(name="PlaylistLength", score=score, metadata={"duration_min": duration})
+    score, metadata = compute_playlist_length_score(output)
+    return Score(name="PlaylistLength", score=score, metadata=metadata)
 
 Eval(
     name="PlaylistGenerator",
     task=task,
-    data=init_dataset(project="PlaylistGenerator", name="InputExamples"),
+    data=init_dataset(project=PROJECT_NAME, name="InputExamples"),
     scores=[variety_scorer, playlist_length_scorer],
     parameters={
         "main": {
