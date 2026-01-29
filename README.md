@@ -96,7 +96,7 @@ Try a few different requests to generate traces:
 
 ### Agent Output Structure
 
-The agent returns structured Pydantic models:
+The agent returns structured Pydantic models which are then dumped to python dicts:
 
 ```python
 class Song(BaseModel):

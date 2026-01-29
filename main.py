@@ -219,7 +219,7 @@ def run_agent(user_request: str) -> AgentResult:
         if not message.tool_calls:
             print(f"\nAssistant: {message.content}")
             result.response = message.content
-            return result
+            return result.model_dump()
 
         # Process tool calls
         messages.append(message)
@@ -264,11 +264,11 @@ def main():
             break
         if user_input:
             result = run_agent(user_input)
-            if result.playlist:
+            if result["playlist"]:
                 print(f"\n--- Playlist Created ---")
-                print(f"Name: {result.playlist.playlist_name}")
-                print(f"Tracks: {result.playlist.total_tracks}")
-                print(f"Duration: {result.playlist.total_duration_min} minutes")
+                print(f"Name: {result['playlist']['playlist_name']}")
+                print(f"Tracks: {result['playlist']['total_tracks']}")
+                print(f"Duration: {result['playlist']['total_duration_min']} minutes")
 
 
 if __name__ == "__main__":
