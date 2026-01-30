@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from autoevals import LLMClassifier
-from braintrust import Eval, Score, init_dataset
+from braintrust import Eval, Score, init_dataset, load_prompt
 
 from evals.core import (
     PROJECT_NAME,

@@ -1,5 +1,12 @@
 import json
-from braintrust import init_logger, load_prompt, traced, wrap_openai
+from typing import List, Dict, Any, Optional
+
+from braintrust import (
+    init_logger,
+    load_prompt,
+    traced,
+    wrap_openai,
+)
 from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel
@@ -9,26 +16,33 @@ load_dotenv()
 logger = init_logger(project="PlaylistGenerator")
 client = wrap_openai(OpenAI())
 
+DEFAULT_MODEL = "gpt-4o-mini"
+
+
 class Song(BaseModel):
     title: str
     artist: str
 
+
 class Playlist(BaseModel):
     playlist_name: str
-    songs: list[Song]
+    songs: List[Song]
     total_tracks: int
     total_duration_min: float
 
+
 class ToolCall(BaseModel):
     tool: str
-    arguments: dict
-    result: dict | list
+    arguments: Dict[str, Any]
+    result: Dict[str, Any] | List[Dict[str, Any]]
+
 
 class AgentResult(BaseModel):
     """Structured output from the playlist agent."""
-    playlist: Playlist | None = None
+    playlist: Optional[Playlist] = None
     response: str = ""
-    tool_calls: list[ToolCall] = []
+    tool_calls: List[ToolCall] = []
+
 
 # Mock music catalog
 MUSIC_CATALOG = [
@@ -99,8 +113,14 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "genre": {"type": "string", "description": "Genre to filter by (e.g., rock, pop, electronic, classical, hip-hop, ambient, synth-pop, indie, reggae, soul, country, folk)"},
-                    "mood": {"type": "string", "description": "Mood to filter by (e.g., energetic, calm, happy, motivational, melancholy)"},
+                    "genre": {
+                        "type": "string",
+                        "description": "Genre to filter by (e.g., rock, pop, electronic, classical, hip-hop, ambient, synth-pop, indie, reggae, soul, country, folk)",
+                    },
+                    "mood": {
+                        "type": "string",
+                        "description": "Mood to filter by (e.g., energetic, calm, happy, motivational, melancholy)",
+                    },
                 },
                 "required": [],
             },
@@ -129,7 +149,11 @@ TOOLS = [
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "Name of the playlist"},
-                    "song_ids": {"type": "array", "items": {"type": "string"}, "description": "List of song IDs to include"},
+                    "song_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of song IDs to include",
+                    },
                 },
                 "required": ["name", "song_ids"],
             },
@@ -138,19 +162,20 @@ TOOLS = [
 ]
 
 
-@traced
-def search_songs(genre: str = None, mood: str = None) -> list[dict]:
+@traced(span_attributes={"name": "catalog_search", "type": "tool"})
+def search_songs(genre: str = None, mood: str = None) -> List[Dict[str, Any]]:
     """Search the catalog by genre and/or mood."""
     results = MUSIC_CATALOG
     if genre:
         results = [s for s in results if s["genre"].lower() == genre.lower()]
     if mood:
         results = [s for s in results if s["mood"].lower() == mood.lower()]
+
     return [{"id": s["id"], "title": s["title"], "artist": s["artist"]} for s in results]
 
 
-@traced
-def get_song_details(song_id: str) -> dict | None:
+@traced(span_attributes={"name": "catalog_get_song", "type": "tool"})
+def get_song_details(song_id: str) -> Dict[str, Any] | None:
     """Get full details for a song by ID."""
     for song in MUSIC_CATALOG:
         if song["id"] == song_id:
@@ -158,10 +183,10 @@ def get_song_details(song_id: str) -> dict | None:
     return None
 
 
-@traced
-def create_playlist(name: str, song_ids: list[str]) -> dict:
+@traced(span_attributes={"name": "playlist_builder", "type": "tool"})
+def create_playlist(name: str, song_ids: List[str]) -> Dict[str, Any]:
     """Create a playlist with the given songs."""
-    songs = []
+    songs: List[Dict[str, str]] = []
     total_duration = 0
     for sid in song_ids:
         song = get_song_details(sid)
@@ -177,11 +202,11 @@ def create_playlist(name: str, song_ids: list[str]) -> dict:
     }
 
 
-@traced
-def handle_tool_call(tool_name: str, arguments: dict) -> str:
+@traced(span_attributes={"name": "tool_router", "type": "function"})
+def handle_tool_call(tool_name: str, arguments: Dict[str, Any]) -> str:
     """Execute a tool and return the result as a string."""
     if tool_name == "search_songs":
-        result = search_songs(arguments.get("genre"), arguments.get("mood"))
+        result: Any = search_songs(arguments.get("genre"), arguments.get("mood"))
     elif tool_name == "get_song_details":
         result = get_song_details(arguments["song_id"])
     elif tool_name == "create_playlist":
@@ -192,21 +217,24 @@ def handle_tool_call(tool_name: str, arguments: dict) -> str:
     return json.dumps(result)
 
 
-@traced
-def run_agent(user_request: str, prompt_override: dict | None = None) -> AgentResult:
+@traced(span_attributes={"name": "playlist_agent_orchestrator", "type": "task"})
+def run_agent(user_request: str, prompt_override: Dict[str, Any] | None = None) -> Dict[str, Any]:
     """Run the playlist agent with the given user request."""
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"User Request: {user_request}")
-    print('='*50)
+    print("=" * 50)
 
     result = AgentResult()
+    tool_call_count = 0
+    conversation_log: List[Dict[str, Any]] = []
+    conversation_log.append({"role": "user", "content": user_request})
 
     prompt_payload = prompt_override
     if prompt_payload is None:
         prompt = load_prompt(
             "PlaylistGenerator",
             "playlist-agent",
-            defaults={"model": "gpt-4o-mini"},
+            defaults={"model": DEFAULT_MODEL},
         )
         prompt_payload = prompt.build(user_request=user_request)
 
@@ -214,52 +242,75 @@ def run_agent(user_request: str, prompt_override: dict | None = None) -> AgentRe
 
     while True:
         request_payload = dict(prompt_payload)
-        request_payload.setdefault("model", "gpt-4o-mini")
+        request_payload.setdefault("model", DEFAULT_MODEL)
         request_payload["messages"] = messages
-        response = client.chat.completions.create(**request_payload, tools=TOOLS)
+
+        response = client.chat.completions.create(
+            **request_payload,
+            tools=TOOLS,
+        )
 
         message = response.choices[0].message
 
-        # If no tool calls, we're done
+        conversation_log.append(
+            {
+                "role": "assistant",
+                "content": message.content,
+                "tool_calls": [tc.function.name for tc in (message.tool_calls or [])],
+            }
+        )
+
         if not message.tool_calls:
             print(f"\nAssistant: {message.content}")
-            result.response = message.content
-            return result.model_dump()
+            result.response = message.content or ""
+            # The structured return (including playlist + tool_calls + conversation_log)
+            # will show up as the root span output in Braintrust.
+            return {
+                **result.model_dump(),
+                "tool_call_count": tool_call_count,
+                "conversation_log": conversation_log,
+                "agent": "playlist_generator_v1",
+                "environment": "local_cli",
+                "model": DEFAULT_MODEL,
+            }
 
-        # Process tool calls
         messages.append(message)
 
         for tool_call in message.tool_calls:
+            tool_call_count += 1
+
             tool_name = tool_call.function.name
             arguments = json.loads(tool_call.function.arguments)
 
             print(f"\n→ Calling tool: {tool_name}")
             print(f"  Arguments: {arguments}")
 
-            tool_result = handle_tool_call(tool_name, arguments)
-            tool_result_parsed = json.loads(tool_result)
+            tool_result_json = handle_tool_call(tool_name, arguments)
+            tool_result_parsed = json.loads(tool_result_json)
 
-            print(f"  Result: {tool_result}")
+            print(f"  Result: {tool_result_json}")
 
-            # Track tool calls for observability
-            result.tool_calls.append(ToolCall(
-                tool=tool_name,
-                arguments=arguments,
-                result=tool_result_parsed,
-            ))
+            result.tool_calls.append(
+                ToolCall(
+                    tool=tool_name,
+                    arguments=arguments,
+                    result=tool_result_parsed,
+                )
+            )
 
-            # Capture the playlist if one was created
             if tool_name == "create_playlist":
                 result.playlist = Playlist(**tool_result_parsed)
 
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": tool_result,
-            })
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": tool_result_json,
+                }
+            )
 
 
-def main():
+def main() -> None:
     print("Playlist Generator Agent")
     print("Type 'quit' to exit\n")
 
@@ -269,11 +320,12 @@ def main():
             break
         if user_input:
             result = run_agent(user_input)
-            if result["playlist"]:
-                print(f"\n--- Playlist Created ---")
-                print(f"Name: {result['playlist']['playlist_name']}")
-                print(f"Tracks: {result['playlist']['total_tracks']}")
-                print(f"Duration: {result['playlist']['total_duration_min']} minutes")
+            if result.get("playlist"):
+                playlist = result["playlist"]
+                print("\n--- Playlist Created ---")
+                print(f"Name: {playlist['playlist_name']}")
+                print(f"Tracks: {playlist['total_tracks']}")
+                print(f"Duration: {playlist['total_duration_min']} minutes")
 
 
 if __name__ == "__main__":
