@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 from autoevals import LLMClassifier
-from braintrust import Eval, init_dataset, Score, Prompt
-from braintrust.prompt import PromptData
+from braintrust import Eval, Score, init_dataset
+
 from evals.core import (
     PROJECT_NAME,
     VARIETY_PROMPT_TEMPLATE,
@@ -12,75 +14,47 @@ from main import run_agent
 from settings import PROMPT_ENVIRONMENT
 
 
-def _build_prompt_override(parameters: dict | None, input: dict) -> dict | None:
-    if not parameters:
-        return None
+def _normalize_user_request(raw_input) -> str:
+    # Common Braintrust dataset shapes:
+    #   input: "make me a happy playlist"
+    #   input: {"user_request": "..."}
+    #   input: {"input": "..."}
+    if isinstance(raw_input, str):
+        return raw_input
 
-    main_param = parameters.get("main")
-    if main_param is None:
-        return None
+    if isinstance(raw_input, dict):
+        if isinstance(raw_input.get("user_request"), str):
+            return raw_input["user_request"]
+        if isinstance(raw_input.get("input"), str):
+            return raw_input["input"]
 
-    if hasattr(main_param, "build"):
-        return main_param.build(input=input)
+    return ""
 
-    if isinstance(main_param, dict):
-        if "messages" in main_param or isinstance(main_param.get("prompt"), str):
-            return main_param
 
-        prompt_data = None
-        if isinstance(main_param.get("prompt"), dict):
-            prompt_data = main_param
-        elif main_param.get("type") == "prompt":
-            prompt_data = main_param.get("default")
-
-        if prompt_data:
-            prompt_name = main_param.get("name") if isinstance(main_param.get("name"), str) else "main"
-            prompt = Prompt.from_prompt_data(prompt_name, PromptData.from_dict_deep(prompt_data))
-            return prompt.build(input=input)
-
-    return None
-
-def _attach_playlist_metadata(hooks: dict | None, playlist: dict | None) -> None:
-    if hooks is None or playlist is None:
+def _set_environment_metadata(hooks) -> None:
+    # Attach env for debugging; works with dict or object hooks.
+    if hooks is None:
         return
 
-    metadata = None
+    try:
+        hooks.metadata = {"environment": PROMPT_ENVIRONMENT}
+        return
+    except Exception:
+        pass
+
     if isinstance(hooks, dict):
-        metadata = hooks.get("metadata")
-        if metadata is None:
-            metadata = {}
-            hooks["metadata"] = metadata
+        hooks.setdefault("metadata", {})["environment"] = PROMPT_ENVIRONMENT
 
-    if metadata is None:
-        return
 
-    metadata.update(
-        {
-            "playlist_name": playlist.get("playlist_name"),
-            "total_tracks": playlist.get("total_tracks"),
-            "total_duration_min": playlist.get("total_duration_min"),
-            "tracks": playlist.get("songs"),
-        }
-    )
+def task(input, hooks):
+    user_request = _normalize_user_request(input)
+    _set_environment_metadata(hooks)
 
-def task(input: dict, hooks: dict):
-    """Run the playlist agent for the dataset input."""
-    user_input = input.get("user_request", "")
-    parameters = None
-    if hooks is not None:
-        parameters = getattr(hooks, "parameters", None)
-        if parameters is None and isinstance(hooks, dict):
-            parameters = hooks.get("parameters")
-    if hooks is not None:
-        try:
-            hooks.metadata = {"environment": PROMPT_ENVIRONMENT}
-        except AttributeError:
-            if isinstance(hooks, dict):
-                hooks.setdefault("metadata", {})["environment"] = PROMPT_ENVIRONMENT
-    prompt_override = _build_prompt_override(parameters, input)
-    result_payload = run_agent(user_input, prompt_override=prompt_override)
-    _attach_playlist_metadata(hooks, result_payload.get("playlist") if isinstance(result_payload, dict) else None)
-    return result_payload
+    # No prompt overrides. Always run the "real" agent path.
+    return run_agent(user_request)
+
+
+# --- Scorers ---
 
 variety_scorer = LLMClassifier(
     name="Variety",
@@ -89,26 +63,17 @@ variety_scorer = LLMClassifier(
     model=VARIETY_MODEL,
 )
 
+
 def playlist_length_scorer(output: dict):
     score, metadata = compute_playlist_length_score(output)
     return Score(name="PlaylistLength", score=score, metadata=metadata)
+
+
+# --- Eval registration ---
 
 Eval(
     name="PlaylistGenerator",
     task=task,
     data=init_dataset(project=PROJECT_NAME, name="InputExamples"),
     scores=[variety_scorer, playlist_length_scorer],
-    parameters={
-        "main": {
-            "type": "prompt",
-            "name": "Main prompt",
-            "default": {
-                "prompt": {
-                    "type": "chat",
-                    "messages": [{"role": "user", "content": "{{input.user_request}}"}],
-                },
-                "options": {"model": "gpt-4o-mini"},
-            },
-        },
-    },
 )
